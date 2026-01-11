@@ -1,0 +1,1 @@
+# Spam classifier app initialization
