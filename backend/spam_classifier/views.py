@@ -4,10 +4,12 @@ from django.views.decorators.http import require_http_methods
 import json
 import joblib
 import os
+import numpy as np
 from .utils.email_parser import Parser
 
-# Initialize parser
-parser = Parser()
+# Try both configurations to see which works better
+parser_with_stemming = Parser(use_stemming=True, remove_stopwords=False)
+parser_no_stemming = Parser(use_stemming=False, remove_stopwords=False)
 
 # Load models (will be loaded when first needed)
 model = None
@@ -51,49 +53,62 @@ def predict(request):
                 'error': 'No email content provided'
             }, status=400)
         
-        # Parse email using the same Parser class from training
-        parsed_email = parser.parse_text(email_content)
+        parsed_with_stem = parser_with_stemming.parse_text(email_content)
+        parsed_no_stem = parser_no_stemming.parse_text(email_content)
         
-        # Convert tokens to text for vectorization
-        processed_text = parser.get_text_from_tokens(parsed_email)
+        text_with_stem = parser_with_stemming.get_text_from_tokens(parsed_with_stem)
+        text_no_stem = parser_no_stemming.get_text_from_tokens(parsed_no_stem)
         
-        # Vectorize the email
-        email_vector = vectorizer.transform([processed_text])
+        # Vectorize both versions
+        vector_with_stem = vectorizer.transform([text_with_stem])
+        vector_no_stem = vectorizer.transform([text_no_stem])
+        
+        # Check which one has better vocabulary coverage
+        coverage_with_stem = vector_with_stem.nnz
+        coverage_no_stem = vector_no_stem.nnz
+        
+        # Use the version with better coverage
+        if coverage_no_stem >= coverage_with_stem:
+            email_vector = vector_no_stem
+            processed_text = text_no_stem
+            used_parser = "no_stemming"
+        else:
+            email_vector = vector_with_stem
+            processed_text = text_with_stem
+            used_parser = "with_stemming"
         
         # Make prediction - get probabilities
         probabilities = model.predict_proba(email_vector)[0]
         classes = model.classes_
         
-        # Map classes correctly: find which index corresponds to spam vs ham
-        # Most models use 0=ham, 1=spam OR 'ham', 'spam'
+        spam_prob = 0.5
+        ham_prob = 0.5
+        
         if len(classes) == 2:
             # Convert classes to strings for comparison
-            class_0 = str(classes[0]).lower()
-            class_1 = str(classes[1]).lower()
+            class_list = [str(c).strip().lower() for c in classes]
             
-            # Determine which index is spam
-            if class_1 in ['1', 'spam']:
-                spam_idx = 1
-                ham_idx = 0
-            elif class_0 in ['1', 'spam']:
-                spam_idx = 0
-                ham_idx = 1
-            else:
-                # Default: assume higher index is spam
+            # Try to find spam/ham in the class names
+            spam_idx = None
+            ham_idx = None
+            
+            for i, cls in enumerate(class_list):
+                if 'spam' in cls or cls == '1':
+                    spam_idx = i
+                elif 'ham' in cls or cls == '0':
+                    ham_idx = i
+            
+            # If we couldn't identify, assume standard 0=ham, 1=spam
+            if spam_idx is None:
                 spam_idx = 1
                 ham_idx = 0
             
             spam_prob = float(probabilities[spam_idx])
             ham_prob = float(probabilities[ham_idx])
-            
-            # Determine prediction based on probability
-            is_spam = spam_prob > 0.5
-            prediction_label = 'spam' if is_spam else 'ham'
-        else:
-            # Fallback
-            spam_prob = float(probabilities[-1])
-            ham_prob = float(probabilities[0])
-            prediction_label = 'spam' if spam_prob > 0.5 else 'ham'
+        
+        # Determine prediction based on probability
+        is_spam = spam_prob > 0.5
+        prediction_label = 'spam' if is_spam else 'ham'
         
         # Get feature importance (words with highest coefficients)
         feature_names = vectorizer.get_feature_names_out()
@@ -103,6 +118,7 @@ def predict(request):
         non_zero_indices = email_features.nonzero()[0]
         
         # Get model coefficients
+        important_words = []
         if hasattr(model, 'coef_'):
             coefficients = model.coef_[0]
             
@@ -110,35 +126,42 @@ def predict(request):
             word_importance = []
             for idx in non_zero_indices:
                 word = feature_names[idx]
-                weight = float(coefficients[idx] * email_features[idx])
+                coef = float(coefficients[idx])
+                tf_idf_value = float(email_features[idx])
+                weight = coef * tf_idf_value
                 word_importance.append({
                     'word': word,
-                    'weight': weight
+                    'weight': weight,
+                    'coefficient': coef,
+                    'tfidf': tf_idf_value
                 })
             
             # Sort by absolute weight and take top 20
             word_importance.sort(key=lambda x: abs(x['weight']), reverse=True)
-            top_words = word_importance[:20]
-        else:
-            top_words = []
+            important_words = word_importance[:20]
         
         return JsonResponse({
             'prediction': prediction_label,
             'spam_probability': spam_prob,
             'ham_probability': ham_prob,
-            'important_words': top_words,
+            'important_words': important_words,
             'parsed_tokens_count': {
-                'subject': len(parsed_email['subject']),
-                'body': len(parsed_email['body'])
+                'subject': len(parsed_no_stem['subject']),
+                'body': len(parsed_no_stem['body'])
             },
-            # Debug info to help diagnose issues
             'debug': {
                 'model_classes': [str(c) for c in classes],
                 'raw_probabilities': [float(p) for p in probabilities],
-                'spam_index': spam_idx,
-                'ham_index': ham_idx,
+                'vocabulary_coverage': {
+                    'with_stemming': coverage_with_stem,
+                    'no_stemming': coverage_no_stem,
+                    'used_parser': used_parser
+                },
                 'processed_text_length': len(processed_text.split()),
-                'processed_text_preview': ' '.join(processed_text.split()[:50])
+                'processed_text_preview': ' '.join(processed_text.split()[:30]),
+                'original_text_preview': email_content[:200],
+                'total_vocabulary_size': len(feature_names),
+                'non_zero_features': len(non_zero_indices)
             }
         })
         
