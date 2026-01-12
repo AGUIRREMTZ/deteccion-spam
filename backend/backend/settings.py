@@ -14,6 +14,11 @@ DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '*').split(',')
 
+CSRF_TRUSTED_ORIGINS = os.environ.get(
+    'CSRF_TRUSTED_ORIGINS',
+    ''
+).split(',') if os.environ.get('CSRF_TRUSTED_ORIGINS') else []
+
 # Application definition
 INSTALLED_APPS = [
     'django.contrib.contenttypes',
@@ -62,6 +67,8 @@ CORS_ALLOWED_ORIGINS = os.environ.get(
     'CORS_ALLOWED_ORIGINS',
     'https://your-vercel-app.vercel.app,http://localhost:3000'
 ).split(',')
+
+CORS_ALLOW_ALL_ORIGINS = os.environ.get('CORS_ALLOW_ALL_ORIGINS', 'False') == 'True'
 
 CORS_ALLOW_METHODS = [
     'GET',
