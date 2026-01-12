@@ -60,33 +60,37 @@ def predict(request):
         # Vectorize the email
         email_vector = vectorizer.transform([processed_text])
         
-        # Make prediction
-        prediction_class = model.predict(email_vector)[0]
+        # Make prediction - get probabilities
         probabilities = model.predict_proba(email_vector)[0]
-        
-        # Get class labels from model
         classes = model.classes_
         
-        # Create probability dict with proper labels
-        # If classes are numeric (0, 1), map them: 0='ham', 1='spam'
+        # Map classes correctly: find which index corresponds to spam vs ham
+        # Most models use 0=ham, 1=spam OR 'ham', 'spam'
         if len(classes) == 2:
-            if isinstance(classes[0], (int, float)):
-                # Numeric classes: assume 0=ham, 1=spam
-                spam_idx = 1 if 1 in classes else (1 if classes[1] > classes[0] else 0)
-                ham_idx = 0 if spam_idx == 1 else 1
-                spam_prob = float(probabilities[spam_idx])
-                ham_prob = float(probabilities[ham_idx])
-                is_spam = prediction_class == classes[spam_idx]
-                prediction_label = 'spam' if is_spam else 'ham'
+            # Convert classes to strings for comparison
+            class_0 = str(classes[0]).lower()
+            class_1 = str(classes[1]).lower()
+            
+            # Determine which index is spam
+            if class_1 in ['1', 'spam']:
+                spam_idx = 1
+                ham_idx = 0
+            elif class_0 in ['1', 'spam']:
+                spam_idx = 0
+                ham_idx = 1
             else:
-                # String classes
-                spam_idx = list(classes).index('spam') if 'spam' in classes else 1
-                ham_idx = list(classes).index('ham') if 'ham' in classes else 0
-                spam_prob = float(probabilities[spam_idx])
-                ham_prob = float(probabilities[ham_idx])
-                prediction_label = str(prediction_class)
+                # Default: assume higher index is spam
+                spam_idx = 1
+                ham_idx = 0
+            
+            spam_prob = float(probabilities[spam_idx])
+            ham_prob = float(probabilities[ham_idx])
+            
+            # Determine prediction based on probability
+            is_spam = spam_prob > 0.5
+            prediction_label = 'spam' if is_spam else 'ham'
         else:
-            # Fallback for unexpected class structure
+            # Fallback
             spam_prob = float(probabilities[-1])
             ham_prob = float(probabilities[0])
             prediction_label = 'spam' if spam_prob > 0.5 else 'ham'
@@ -127,11 +131,14 @@ def predict(request):
                 'subject': len(parsed_email['subject']),
                 'body': len(parsed_email['body'])
             },
-            # Debug info
+            # Debug info to help diagnose issues
             'debug': {
                 'model_classes': [str(c) for c in classes],
                 'raw_probabilities': [float(p) for p in probabilities],
-                'processed_text_length': len(processed_text.split())
+                'spam_index': spam_idx,
+                'ham_index': ham_idx,
+                'processed_text_length': len(processed_text.split()),
+                'processed_text_preview': ' '.join(processed_text.split()[:50])
             }
         })
         
