@@ -91,3 +91,12 @@ USE_I18N = True
 USE_TZ = True
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Añade esto al final de settings.py
+CORS_ALLOW_CREDENTIALS = True
+
+# Esto permite que Vercel se comunique de forma segura
+CSRF_TRUSTED_ORIGINS = [
+    "https://spam-front.vercel.app",
+    "https://deteccion-spam.onrender.com"
+]
