@@ -92,16 +92,28 @@ class Parser:
         if not text:
             return []
         
+        if isinstance(text, bytes):
+            text = text.decode('utf-8', errors='ignore')
+        
+        text = str(text)
+        
         # Remove punctuation
         for c in self.punctuation:
-            text = text.replace(c, "")
+            text = text.replace(c, " ")  # Replace with space instead of empty string
         text = text.replace("\t", " ")
         text = text.replace("\n", " ")
+        
+        tokens = [w for w in text.split() if w.strip()]
+        
+        # Stemming of the tokens and remove stopwords
+        stemmed_tokens = []
+        for w in tokens:
+            w_lower = w.lower()
+            if w_lower not in self.stopwords and len(w_lower) > 1:  # Filter very short words
+                stemmed_tokens.append(self.stemmer.stem(w_lower))
+        
+        return stemmed_tokens
 
-        tokens = list(filter(None, text.split(" ")))
-        # Stemming of the tokens
-        return [self.stemmer.stem(w.lower()) for w in tokens if w.lower() not in self.stopwords]
-    
     def get_text_from_tokens(self, parsed_email):
         """Convert parsed email tokens back to text for vectorization"""
         all_tokens = parsed_email['subject'] + parsed_email['body']
