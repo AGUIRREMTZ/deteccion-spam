@@ -61,15 +61,35 @@ def predict(request):
         email_vector = vectorizer.transform([processed_text])
         
         # Make prediction
-        prediction = model.predict(email_vector)[0]
+        prediction_class = model.predict(email_vector)[0]
         probabilities = model.predict_proba(email_vector)[0]
         
-        # Get class labels (assuming binary classification: ham=0, spam=1)
+        # Get class labels from model
         classes = model.classes_
-        prob_dict = {str(cls): float(prob) for cls, prob in zip(classes, probabilities)}
         
-        # Determine spam probability
-        spam_prob = prob_dict.get('spam', prob_dict.get('1', 0.5))
+        # Create probability dict with proper labels
+        # If classes are numeric (0, 1), map them: 0='ham', 1='spam'
+        if len(classes) == 2:
+            if isinstance(classes[0], (int, float)):
+                # Numeric classes: assume 0=ham, 1=spam
+                spam_idx = 1 if 1 in classes else (1 if classes[1] > classes[0] else 0)
+                ham_idx = 0 if spam_idx == 1 else 1
+                spam_prob = float(probabilities[spam_idx])
+                ham_prob = float(probabilities[ham_idx])
+                is_spam = prediction_class == classes[spam_idx]
+                prediction_label = 'spam' if is_spam else 'ham'
+            else:
+                # String classes
+                spam_idx = list(classes).index('spam') if 'spam' in classes else 1
+                ham_idx = list(classes).index('ham') if 'ham' in classes else 0
+                spam_prob = float(probabilities[spam_idx])
+                ham_prob = float(probabilities[ham_idx])
+                prediction_label = str(prediction_class)
+        else:
+            # Fallback for unexpected class structure
+            spam_prob = float(probabilities[-1])
+            ham_prob = float(probabilities[0])
+            prediction_label = 'spam' if spam_prob > 0.5 else 'ham'
         
         # Get feature importance (words with highest coefficients)
         feature_names = vectorizer.get_feature_names_out()
@@ -99,14 +119,19 @@ def predict(request):
             top_words = []
         
         return JsonResponse({
-            'prediction': str(prediction),
-            'probabilities': prob_dict,
+            'prediction': prediction_label,
             'spam_probability': spam_prob,
-            'ham_probability': 1 - spam_prob,
+            'ham_probability': ham_prob,
             'important_words': top_words,
-            'parsed_tokens': {
-                'subject': parsed_email['subject'][:10],  # First 10 tokens
-                'body_preview': parsed_email['body'][:20]  # First 20 tokens
+            'parsed_tokens_count': {
+                'subject': len(parsed_email['subject']),
+                'body': len(parsed_email['body'])
+            },
+            # Debug info
+            'debug': {
+                'model_classes': [str(c) for c in classes],
+                'raw_probabilities': [float(p) for p in probabilities],
+                'processed_text_length': len(processed_text.split())
             }
         })
         
@@ -115,8 +140,10 @@ def predict(request):
             'error': 'Invalid JSON in request body'
         }, status=400)
     except Exception as e:
+        import traceback
         return JsonResponse({
-            'error': f'Server error: {str(e)}'
+            'error': f'Server error: {str(e)}',
+            'traceback': traceback.format_exc()
         }, status=500)
 
 
